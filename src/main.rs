@@ -12,18 +12,20 @@ mod incognitoer;
 const ADDR: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 const PORT: u16 = 8001;
 const INDEX: &str = "torrent_cache2";
+const KNABEN_DOMAIN: &str = "knaben.eu";
+const PROXY_DOMAIN: &str = "knaben.xyz";
 
 
 #[derive(Deserialize)]
 struct QueryBody {
     query: Option<String>,
-    order_by: Option<String>,
-    order_direction: Option<String>,
+    order_by: Option<String>, // DONE
+    order_direction: Option<String>, // DONE
     categories: Option<Vec<i32>>, // DONE
     from: Option<u16>, // DONE
     size: Option<u16>, // DONE
-    hide_xxx: Option<bool>,
-    hide_unsafe: Option<bool>,
+    hide_xxx: Option<bool>, // DONE
+    hide_unsafe: Option<bool>, // DONE
 }
 
 
@@ -40,6 +42,17 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
     let mut query = json!({
         "query": {}
     });
+
+    if let Some(order_by) = &body.order_by {
+        let sort = incognitoer::format_sort(order_by.clone()).map_err(|e| Error::new(400, "Failed to order by", "sort_failed", Some(&e.to_string())))?;
+        let sort_direction = body.order_direction.clone().unwrap_or_else(|| "desc".to_string());
+        if sort_direction.to_lowercase() != "desc" && sort_direction.to_lowercase() != "asc" {
+            return Err(Error::new(400, "Order direction not correct", "sort_failed", Some("Order direction needs to be either desc or asc or not defined")));
+        }
+        query["sort"][sort] = json!({
+            "order": sort_direction
+        });
+    }
 
     if let Some(categories) = &body.categories {
         query["query"]["bool"]["filter"] = json!({
@@ -60,7 +73,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
         });
     }
 
-    if !body.hide_unsafe.unwrap_or(true) {
+    if body.hide_unsafe.unwrap_or(true) {
         query["query"]["bool"]["must"] = json!({
             "range": {
                 "LastSeen": {
