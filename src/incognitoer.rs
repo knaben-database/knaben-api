@@ -23,6 +23,12 @@ mod tests {
             }
             assert!(found, "Value {} not found in REPLACER", key);
         }
+        for (key, value) in REPLACER.iter() {
+            assert_eq!(REPLACER_REVERSE.get(value), Some(key), "Key-value pair {}-{} not found in REPLACER_REVERSE", value, key);
+        }
+        for (key, value) in REPLACER_REVERSE.iter() {
+            assert_eq!(REPLACER.get(value), Some(key), "Key-value pair {}-{} not found in REPLACER", value, key);
+        }
     }
 }
 
@@ -76,6 +82,35 @@ lazy_static! {
         replace_map.insert("Size", "bytes");
         replace_map.insert("VirusDetection", "virusDetection");
         return replace_map
+    };
+}
+
+pub fn format_field(field: &String) -> Result<String, Box<dyn Error>> {
+    let field = REPLACER_REVERSE.get(field.as_str()).ok_or(format!("Unable to find {}", field))?;
+    return Ok(field.to_string());
+}
+
+lazy_static! {
+    static ref REPLACER_REVERSE: HashMap<&'static str, &'static str> = {
+        let mut replace_r_map : HashMap<&str, &str> = HashMap::new();
+
+        replace_r_map.insert("title", "Title");
+        replace_r_map.insert("hash", "InfoHash");
+        replace_r_map.insert("cachedOrigin", "CachedOrigin");
+        replace_r_map.insert("tracker", "Tracker");
+        replace_r_map.insert("trackerId", "TrackerId");
+        replace_r_map.insert("lastSeen", "LastSeen");
+        replace_r_map.insert("seeders", "Seeders");
+        replace_r_map.insert("peers", "Peers");
+        replace_r_map.insert("categoryId", "Category");
+        replace_r_map.insert("category", "CategoryDesc");
+        replace_r_map.insert("details", "Details");
+        replace_r_map.insert("link", "Link");
+        replace_r_map.insert("magnetUrl", "MagnetUri");
+        replace_r_map.insert("date", "PublishDate");
+        replace_r_map.insert("bytes", "Size");
+        replace_r_map.insert("virusDetection", "VirusDetection");
+        return replace_r_map
     };
 }
 
