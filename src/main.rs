@@ -4,6 +4,7 @@ use elasticsearch::{Elasticsearch, SearchParts};
 use chrono::{Utc, Duration};
 use serde_json::{json, Value};
 use std::net::Ipv4Addr;
+use actix_web::middleware::Logger;
 use elasticsearch::http::response::Response;
 use lazy_static::lazy_static;
 use serde::Deserialize;
@@ -38,16 +39,16 @@ lazy_static! {
 
 #[derive(Deserialize)]
 struct QueryBody {
-    search_type: Option<String>, // DONE
-    query: Option<String>, // DONE
-    search_field: Option<String>, // DONE
-    order_by: Option<String>, // DONE
-    order_direction: Option<String>, // DONE
-    categories: Option<Vec<i32>>, // DONE
-    from: Option<u16>, // DONE
-    size: Option<u16>, // DONE
-    hide_xxx: Option<bool>, // DONE
-    hide_unsafe: Option<bool>, // DONE
+    search_type: Option<String>,
+    query: Option<String>,
+    search_field: Option<String>,
+    order_by: Option<String>,
+    order_direction: Option<String>,
+    categories: Option<Vec<u64>>,
+    from: Option<u16>,
+    size: Option<u16>,
+    hide_xxx: Option<bool>,
+    hide_unsafe: Option<bool>,
 }
 
 
@@ -262,6 +263,8 @@ async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Va
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+
     HttpServer::new(|| {
         App::new()
             .service(api)
@@ -275,6 +278,7 @@ async fn main() -> std::io::Result<()> {
                 web::JsonConfig::default()
                     .error_handler(json_error_handler),
             )
+            .wrap(Logger::new("%{r}a \"%r\" %s %b \"%{User-Agent}i\" %T"))
     })
         .bind((ADDR, PORT))?
         .run()
