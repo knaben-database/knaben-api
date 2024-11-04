@@ -24,7 +24,7 @@ The following fields can be set when searching:
   ---
 
 **Example request**
-```
+```json
 POST /v1
 {
   "search_type": "100%",
@@ -43,7 +43,7 @@ POST /v1
 ```  
 
 **Example response**
-```
+```json
 {
   "max_score": null,
   "total": {
