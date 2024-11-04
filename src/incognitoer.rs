@@ -125,6 +125,7 @@ pub fn obscure(mut val: Value) -> Result<Value, Box<dyn Error>> {
         let hit_obj = hit.as_object_mut().ok_or("Hit is not an object")?;
 
         let id = hit_obj.remove("_id").ok_or("Source doesn't contain an id")?;
+        let score = hit_obj.remove("_score").ok_or("Source doesn't contain an score")?;
 
         if let Some(source) = hit_obj.remove("_source") {
             hit_obj.clear();
@@ -168,6 +169,7 @@ pub fn obscure(mut val: Value) -> Result<Value, Box<dyn Error>> {
             }
 
 
+            hit_obj.insert("score".to_string(), score);
             hit_obj.insert("id".to_string(), id);
         }
     }
