@@ -178,8 +178,6 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
         query["query"]["bool"]["must_not"] = must_not;
     }
 
-    println!("{}", query);
-
     //return Ok(HttpResponse::Ok().json(query));
 
     // Create an Elasticsearch client
