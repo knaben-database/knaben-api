@@ -60,7 +60,10 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
     }
 
     let from = body.from.unwrap_or(0);
-    let size = body.size.unwrap_or(150);
+    let mut size = body.size.unwrap_or(150);
+    if size > 300 {  // No we don't want a single person to query 12 MB
+        size = 300;
+    }
 
     let mut query = json!({});
     let mut must = json!([]);
@@ -174,6 +177,8 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
     if !must_not.as_array().ok_or(Error::new(500, "Failed to build query", "query_building_exception", Some("Failed to mutate must_not to array when finishing of joining to main query")))?.is_empty() {
         query["query"]["bool"]["must_not"] = must_not;
     }
+
+    println!("{}", query);
 
     //return Ok(HttpResponse::Ok().json(query));
 
