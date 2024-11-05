@@ -1,14 +1,14 @@
-use std::collections::HashSet;
-use actix_web::{get, web, App, HttpResponse, HttpServer, post};
-use elasticsearch::{Elasticsearch, SearchParts};
-use chrono::{Utc, Duration};
-use serde_json::{json, Value};
-use std::net::Ipv4Addr;
+use crate::error_handling::{json_error_handler, Error};
 use actix_web::middleware::Logger;
+use actix_web::{get, post, web, App, HttpResponse, HttpServer};
+use chrono::{Duration, Utc};
 use elasticsearch::http::response::Response;
+use elasticsearch::{Elasticsearch, SearchParts};
 use lazy_static::lazy_static;
 use serde::Deserialize;
-use crate::error_handling::{Error, json_error_handler};
+use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::net::Ipv4Addr;
 
 mod error_handling;
 mod incognitoer;
@@ -21,21 +21,20 @@ const PROXY_DOMAIN: &str = "knaben.xyz";
 
 lazy_static! {
     static ref SORT_DIRECTIONS: HashSet<&'static str> = {
-        let mut sort_options : HashSet<&str> = HashSet::new();
+        let mut sort_options: HashSet<&str> = HashSet::new();
         sort_options.insert("desc");
         sort_options.insert("asc");
-        return sort_options
+        return sort_options;
     };
 }
 
 lazy_static! {
     static ref SEARCH_OPTIONS: HashSet<&'static str> = {
-        let mut search_options : HashSet<&str> = HashSet::new();
+        let mut search_options: HashSet<&str> = HashSet::new();
         search_options.insert("score");
-        return search_options
+        return search_options;
     };
 }
-
 
 #[derive(Deserialize)]
 struct QueryBody {
@@ -51,17 +50,22 @@ struct QueryBody {
     hide_unsafe: Option<bool>,
 }
 
-
 #[post("/{version}")]
 async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result<HttpResponse, Error> {
     let version = path.into_inner();
     if !version.eq_ignore_ascii_case("v1") {
-        return Err(Error::new(400, "Invalid version, must be v1", "no_path_found", Some("Path must be /v1, that is the only path that is supported right now")));
+        return Err(Error::new(
+            400,
+            "Invalid version, must be v1",
+            "no_path_found",
+            Some("Path must be /v1, that is the only path that is supported right now"),
+        ));
     }
 
     let from = body.from.unwrap_or(0);
     let mut size = body.size.unwrap_or(150);
-    if size > 300 {  // No we don't want a single person to query 12 MB
+    if size > 300 {
+        // No we don't want a single person to query 12 MB
         size = 300;
     }
 
@@ -70,10 +74,16 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
     let mut must_not = json!([]);
 
     if let Some(order_by) = &body.order_by {
-        let sort = incognitoer::format_sort(order_by.clone()).map_err(|e| Error::new(400, "Failed to order by", "sort_failed", Some(&e.to_string())))?;
+        let sort =
+            incognitoer::format_sort(order_by.clone()).map_err(|e| Error::new(400, "Failed to order by", "sort_failed", Some(&e.to_string())))?;
         let sort_direction = body.order_direction.clone().unwrap_or_else(|| "desc".to_string()).to_lowercase();
         if !SORT_DIRECTIONS.contains(sort_direction.as_str()) {
-            return Err(Error::new(400, "Order direction not correct", "sort_failed", Some("Order direction needs to be either desc or asc or not defined")));
+            return Err(Error::new(
+                400,
+                "Order direction not correct",
+                "sort_failed",
+                Some("Order direction needs to be either desc or asc or not defined"),
+            ));
         }
         query["sort"][sort] = json!({
             "order": sort_direction
@@ -88,10 +98,11 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
         };
 
         let field = match body.search_field.as_ref() {
-            Some(f) => Some(incognitoer::format_field(f).map_err(|e| Error::new(400, "Failed to format field", "format_field_failed", Some(&e.to_string())))?),
-            None => None
+            Some(f) => Some(
+                incognitoer::format_field(f).map_err(|e| Error::new(400, "Failed to format field", "format_field_failed", Some(&e.to_string())))?,
+            ),
+            None => None,
         };
-
 
         if is_percentage {
             let field = field.unwrap_or("Title".to_string());
@@ -103,7 +114,14 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                     }
                 }
             });
-            must.as_array_mut().ok_or(Error::new(500, "Failed to build query", "query_building_exception", Some("Failed to mutate must minimum_should_match as array")))?.push(match_query);
+            must.as_array_mut()
+                .ok_or(Error::new(
+                    500,
+                    "Failed to build query",
+                    "query_building_exception",
+                    Some("Failed to mutate must minimum_should_match as array"),
+                ))?
+                .push(match_query);
         } else if SEARCH_OPTIONS.contains(search_type.as_str()) {
             match search_type.as_str() {
                 "score" => {
@@ -118,14 +136,34 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                             "query_string": {
                                 "query": q
                             }
-                        })
+                        }),
                     };
-                    must.as_array_mut().ok_or(Error::new(500, "Failed to build query", "query_building_exception", Some("Failed to mutate must query_string as array")))?.push(query_string);
+
+                    must.as_array_mut()
+                        .ok_or(Error::new(
+                            500,
+                            "Failed to build query",
+                            "query_building_exception",
+                            Some("Failed to mutate must query_string as array"),
+                        ))?
+                        .push(query_string);
                 },
-                _ => return Err(Error::new(400, "Invalid search option", "invalid_search_option", Some("The option provided needs to be \"score\" or \"100%\".")))
+                _ => {
+                    return Err(Error::new(
+                        400,
+                        "Invalid search option",
+                        "invalid_search_option",
+                        Some("The option provided needs to be \"score\" or \"100%\"."),
+                    ))
+                },
             }
         } else {
-            return Err(Error::new(400, "Invalid search option", "invalid_search_option", Some("The option provided is not valid.")));
+            return Err(Error::new(
+                400,
+                "Invalid search option",
+                "invalid_search_option",
+                Some("The option provided is not valid."),
+            ));
         }
     }
 
@@ -146,7 +184,15 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                 }
             }
         });
-        must_not.as_array_mut().ok_or(Error::new(500, "Failed to build query", "query_building_exception", Some("Failed to mutate must_not range as array")))?.push(range_query);
+        must_not
+            .as_array_mut()
+            .ok_or(Error::new(
+                500,
+                "Failed to build query",
+                "query_building_exception",
+                Some("Failed to mutate must_not range as array"),
+            ))?
+            .push(range_query);
     }
 
     if body.hide_unsafe.unwrap_or(true) {
@@ -157,7 +203,14 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                 }
             }
         });
-        must.as_array_mut().ok_or(Error::new(500, "Failed to build query", "query_building_exception", Some("Failed to mutate must range Last seen as array")))?.push(range_query);
+        must.as_array_mut()
+            .ok_or(Error::new(
+                500,
+                "Failed to build query",
+                "query_building_exception",
+                Some("Failed to mutate must range Last seen as array"),
+            ))?
+            .push(range_query);
         let range_query = json!({
             "range": {
                 "VirusDetection": {
@@ -165,16 +218,41 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                 }
             }
         });
-        must_not.as_array_mut().ok_or(Error::new(500, "Failed to build query", "query_building_exception", Some("Failed to mutate must_not range virus detection as array")))?.push(range_query);
+        must_not
+            .as_array_mut()
+            .ok_or(Error::new(
+                500,
+                "Failed to build query",
+                "query_building_exception",
+                Some("Failed to mutate must_not range virus detection as array"),
+            ))?
+            .push(range_query);
     }
 
-
     // Join the must and must_not together
-    if !must.as_array().ok_or(Error::new(500, "Failed to build query", "query_building_exception", Some("Failed to mutate must to array when finishing of joining to main query")))?.is_empty() {
+    if !must
+        .as_array()
+        .ok_or(Error::new(
+            500,
+            "Failed to build query",
+            "query_building_exception",
+            Some("Failed to mutate must to array when finishing of joining to main query"),
+        ))?
+        .is_empty()
+    {
         query["query"]["bool"]["must"] = must;
     }
 
-    if !must_not.as_array().ok_or(Error::new(500, "Failed to build query", "query_building_exception", Some("Failed to mutate must_not to array when finishing of joining to main query")))?.is_empty() {
+    if !must_not
+        .as_array()
+        .ok_or(Error::new(
+            500,
+            "Failed to build query",
+            "query_building_exception",
+            Some("Failed to mutate must_not to array when finishing of joining to main query"),
+        ))?
+        .is_empty()
+    {
         query["query"]["bool"]["must_not"] = must_not;
     }
 
@@ -183,13 +261,13 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
     // Create an Elasticsearch client
     let client = Elasticsearch::default();
 
-
     let response = client
         .search(SearchParts::Index(&[INDEX]))
         .body(query)
         .from(from as i64)
         .size(size as i64)
-        .send().await;
+        .send()
+        .await;
 
     let formatted_result = format_response(response).await?;
     Ok(HttpResponse::Ok().json(formatted_result))
@@ -199,7 +277,12 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
 async fn api(path: web::Path<String>) -> Result<HttpResponse, Error> {
     let version = path.into_inner();
     if !version.eq_ignore_ascii_case("v1") {
-        return Err(Error::new(400, "Invalid version, must be v1", "no_path_found", Some("Path must be /v1, that is the only path that is supported right now")));
+        return Err(Error::new(
+            400,
+            "Invalid version, must be v1",
+            "no_path_found",
+            Some("Path must be /v1, that is the only path that is supported right now"),
+        ));
     }
 
     // Create an Elasticsearch client
@@ -219,12 +302,7 @@ async fn api(path: web::Path<String>) -> Result<HttpResponse, Error> {
     });
 
     // Perform the search query
-    let response = client
-        .search(SearchParts::Index(&[INDEX]))
-        .body(query)
-        .send()
-        .await;
-
+    let response = client.search(SearchParts::Index(&[INDEX])).body(query).send().await;
 
     let formatted_result = format_response(response).await?;
     Ok(HttpResponse::Ok().json(formatted_result))
@@ -233,36 +311,48 @@ async fn api(path: web::Path<String>) -> Result<HttpResponse, Error> {
 async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Value, Error> {
     let r = r.map_err(|e| Error::new(500, "Failed to execute search", "query_failed", Some(&e.to_string())))?;
     let status_code = r.status_code();
-    let value = r.json::<Value>().await.map_err(|e| Error::new(500, "Failed to parse response body", "parse_failed", Some(&e.to_string())))?;
+    let value = r
+        .json::<Value>()
+        .await
+        .map_err(|e| Error::new(500, "Failed to parse response body", "parse_failed", Some(&e.to_string())))?;
 
     if !status_code.is_success() {
         if let Some(error) = value.get("error") {
             let error_type = error.get("type").and_then(Value::as_str).unwrap_or("Unknown error type");
             let reason = error.get("reason").and_then(Value::as_str);
-            let detailed_reason = error.get("root_cause")
+            let detailed_reason = error
+                .get("root_cause")
                 .and_then(Value::as_array)
                 .and_then(|arr| arr.get(0))
                 .and_then(|cause| cause.get("reason"))
                 .and_then(Value::as_str);
-            let detaileder_reason = error.get("failed_shards")
+            let detaileder_reason = error
+                .get("failed_shards")
                 .and_then(Value::as_array)
                 .and_then(|arr| arr.get(0))
                 .and_then(|cause| cause.get("reason"))
                 .and_then(|cause| cause.get("caused_by"))
                 .and_then(|cause| cause.get("reason"))
                 .and_then(Value::as_str);
-            let error_message = format!("Failed to execute search: {}", detailed_reason.unwrap_or(reason.unwrap_or("Unknown reason")));
-            return Err(Error::new(500, &error_message, error_type, detaileder_reason.or(detailed_reason).or(Some("Unknown reason"))));
+            let error_message = format!(
+                "Failed to execute search: {}",
+                detailed_reason.unwrap_or(reason.unwrap_or("Unknown reason"))
+            );
+            return Err(Error::new(
+                500,
+                &error_message,
+                error_type,
+                detaileder_reason.or(detailed_reason).or(Some("Unknown reason")),
+            ));
         }
         return Err(Error::new(500, "Failed to execute search", "query_failed", Some("Unknown error")));
     }
 
-    let filtered_value = incognitoer::obscure(value).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
+    let filtered_value =
+        incognitoer::obscure(value).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
 
     return Ok(filtered_value);
 }
-
-
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -272,18 +362,13 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .service(api)
             .service(api_post)
-            .default_service(
-                web::to(|| async {
-                    Err::<HttpResponse, _>(Error::new(404, "Invalid path", "invalid_path", None))
-                }),
-            )
-            .app_data(
-                web::JsonConfig::default()
-                    .error_handler(json_error_handler),
-            )
+            .default_service(web::to(|| async {
+                Err::<HttpResponse, _>(Error::new(404, "Invalid path", "invalid_path", None))
+            }))
+            .app_data(web::JsonConfig::default().error_handler(json_error_handler))
             .wrap(Logger::new("%{r}a \"%r\" %s %b \"%{User-Agent}i\" %T"))
     })
-        .bind((ADDR, PORT))?
-        .run()
-        .await
+    .bind((ADDR, PORT))?
+    .run()
+    .await
 }

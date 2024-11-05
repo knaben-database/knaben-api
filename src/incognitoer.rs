@@ -1,11 +1,11 @@
 // This file is meant to hide and obscure the db result a bit
 
-use std::collections::HashMap;
+use crate::{KNABEN_DOMAIN, PROXY_DOMAIN};
+use lazy_static::lazy_static;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::ops::Deref;
-use lazy_static::lazy_static;
-use serde_json::{Value};
-use crate::{KNABEN_DOMAIN, PROXY_DOMAIN};
 
 #[cfg(test)]
 mod tests {
@@ -24,7 +24,13 @@ mod tests {
             assert!(found, "Value {} not found in REPLACER", key);
         }
         for (key, value) in REPLACER.iter() {
-            assert_eq!(REPLACER_REVERSE.get(value), Some(key), "Key-value pair {}-{} not found in REPLACER_REVERSE", value, key);
+            assert_eq!(
+                REPLACER_REVERSE.get(value),
+                Some(key),
+                "Key-value pair {}-{} not found in REPLACER_REVERSE",
+                value,
+                key
+            );
         }
         for (key, value) in REPLACER_REVERSE.iter() {
             assert_eq!(REPLACER.get(value), Some(key), "Key-value pair {}-{} not found in REPLACER", value, key);
@@ -33,8 +39,33 @@ mod tests {
 }
 
 lazy_static! {
+    static ref REQUIRED_FIELDS: HashSet<&'static str> = {
+        let mut required_fields: HashSet<&str> = HashSet::new();
+
+        required_fields.insert("title");
+        required_fields.insert("hash");
+        required_fields.insert("cachedOrigin");
+        required_fields.insert("tracker");
+        required_fields.insert("trackerId");
+        required_fields.insert("lastSeen");
+        required_fields.insert("grabs");
+        required_fields.insert("seeders");
+        required_fields.insert("peers");
+        required_fields.insert("categoryId");
+        required_fields.insert("category");
+        required_fields.insert("details");
+        required_fields.insert("link");
+        required_fields.insert("magnetUrl");
+        required_fields.insert("date");
+        required_fields.insert("bytes");
+        required_fields.insert("virusDetection");
+        return required_fields;
+    };
+}
+
+lazy_static! {
     static ref SORTER: HashMap<&'static str, &'static str> = {
-        let mut sort_map : HashMap<&str, &str> = HashMap::new();
+        let mut sort_map: HashMap<&str, &str> = HashMap::new();
 
         sort_map.insert("title", "Title.keyword");
         sort_map.insert("hash", "InfoHash.keyword");
@@ -42,6 +73,7 @@ lazy_static! {
         sort_map.insert("tracker", "Tracker.keyword");
         sort_map.insert("trackerId", "TrackerId.keyword");
         sort_map.insert("lastSeen", "LastSeen");
+        sort_map.insert("grabs", "Grabs");
         sort_map.insert("seeders", "Seeders");
         sort_map.insert("peers", "Peers");
         sort_map.insert("categoryId", "Category");
@@ -57,13 +89,15 @@ lazy_static! {
 }
 
 pub fn format_sort(sort: String) -> Result<String, Box<dyn Error>> {
-    let sort = SORTER.get(sort.deref()).ok_or(format!("Unable to sort by {} because it doesn't exist in the mapping", sort))?;
+    let sort = SORTER
+        .get(sort.deref())
+        .ok_or(format!("Unable to sort by {} because it doesn't exist in the mapping", sort))?;
     return Ok(sort.to_string());
 }
 
 lazy_static! {
     static ref REPLACER: HashMap<&'static str, &'static str> = {
-        let mut replace_map : HashMap<&str, &str> = HashMap::new();
+        let mut replace_map: HashMap<&str, &str> = HashMap::new();
 
         replace_map.insert("Title", "title");
         replace_map.insert("InfoHash", "hash");
@@ -71,6 +105,7 @@ lazy_static! {
         replace_map.insert("Tracker", "tracker");
         replace_map.insert("TrackerId", "trackerId");
         replace_map.insert("LastSeen", "lastSeen");
+        replace_map.insert("Grabs", "grabs");
         replace_map.insert("Seeders", "seeders");
         replace_map.insert("Peers", "peers");
         replace_map.insert("Category", "categoryId");
@@ -81,7 +116,7 @@ lazy_static! {
         replace_map.insert("PublishDate", "date");
         replace_map.insert("Size", "bytes");
         replace_map.insert("VirusDetection", "virusDetection");
-        return replace_map
+        return replace_map;
     };
 }
 
@@ -92,7 +127,7 @@ pub fn format_field(field: &String) -> Result<String, Box<dyn Error>> {
 
 lazy_static! {
     static ref REPLACER_REVERSE: HashMap<&'static str, &'static str> = {
-        let mut replace_r_map : HashMap<&str, &str> = HashMap::new();
+        let mut replace_r_map: HashMap<&str, &str> = HashMap::new();
 
         replace_r_map.insert("title", "Title");
         replace_r_map.insert("hash", "InfoHash");
@@ -100,6 +135,7 @@ lazy_static! {
         replace_r_map.insert("tracker", "Tracker");
         replace_r_map.insert("trackerId", "TrackerId");
         replace_r_map.insert("lastSeen", "LastSeen");
+        replace_r_map.insert("grabs", "Grabs");
         replace_r_map.insert("seeders", "Seeders");
         replace_r_map.insert("peers", "Peers");
         replace_r_map.insert("categoryId", "Category");
@@ -110,7 +146,7 @@ lazy_static! {
         replace_r_map.insert("date", "PublishDate");
         replace_r_map.insert("bytes", "Size");
         replace_r_map.insert("virusDetection", "VirusDetection");
-        return replace_r_map
+        return replace_r_map;
     };
 }
 
@@ -168,6 +204,12 @@ pub fn obscure(mut val: Value) -> Result<Value, Box<dyn Error>> {
                 }
             }
 
+            // Ensure all fields are there
+            for v in REQUIRED_FIELDS.iter() {
+                if hit_obj.get(v.to_owned()).is_none() {
+                    hit_obj.insert(v.to_string(), Value::Null);
+                }
+            }
 
             hit_obj.insert("score".to_string(), score);
             hit_obj.insert("id".to_string(), id);
