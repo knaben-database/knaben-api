@@ -9,7 +9,8 @@
   rustPlatform,
   openssl,
   pkg-config,
-  libiconv
+  libiconv,
+  pkgs
 }:
 mkShell {
   strictDeps = true;
@@ -26,6 +27,11 @@ mkShell {
   ];
 
   buildInputs = [];
+
+  packages = [
+    pkgs.dlib
+    pkgs.cmake
+  ];
 
   shellHook = ''
     export PKG_CONFIG_PATH="${openssl.dev}/lib/pkgconfig";
