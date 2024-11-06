@@ -1,6 +1,7 @@
 // This file is meant to hide and obscure the db result a bit
 
 use crate::{KNABEN_DOMAIN, PROXY_DOMAIN};
+use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -150,6 +151,26 @@ lazy_static! {
     };
 }
 
+fn parse_date(date_str: &str) -> Option<DateTime<Utc>> {
+    let mut date_str = date_str.to_string();
+    if let Some(time) = date_str.split("T").last() {
+        let time = time.to_string();
+
+        // Remove 2024-11-06T18:07:30.23572938+02:00
+        if time.contains(".") {
+            // https://stackoverflow.com/questions/72362380/how-to-remove-everything-from-a-substring-on-in-rust
+            date_str = (&date_str[0..date_str.find(".").unwrap_or(date_str.len())]).to_string();
+        }
+
+        // Check timezone
+        if !time.contains("+") && !time.contains("-") {
+            date_str += "+02:00";
+        }
+        return DateTime::parse_from_rfc3339(&date_str).ok().and_then(|d| Some(d.with_timezone(&Utc)));
+    }
+    None
+}
+
 pub fn obscure(mut val: Value) -> Result<Value, Box<dyn Error>> {
     let obj = val.as_object_mut().ok_or("Root is not an object")?;
     let hits = obj.get_mut("hits").ok_or("No 'hits' field in root")?;
@@ -200,6 +221,15 @@ pub fn obscure(mut val: Value) -> Result<Value, Box<dyn Error>> {
                             let new_title = format!("{} ...", title);
                             hit_obj.insert("title".to_string(), Value::String(new_title));
                         }
+                    }
+                }
+            }
+
+            // Set LastSeen to the last one of LastSeen or CheckedMagnet
+            if let Some(checked_magnet_date) = source_obj.get("CheckedMagnet").and_then(|cm| cm.as_str()).and_then(parse_date) {
+                if let Some(last_seen_date) = source_obj.get("LastSeen").and_then(|cm| cm.as_str()).and_then(parse_date) {
+                    if checked_magnet_date > last_seen_date {
+                        hit_obj["lastSeen"] = Value::String(checked_magnet_date.to_rfc3339());
                     }
                 }
             }

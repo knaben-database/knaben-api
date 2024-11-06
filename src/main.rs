@@ -48,6 +48,7 @@ struct QueryBody {
     size: Option<u16>,
     hide_xxx: Option<bool>,
     hide_unsafe: Option<bool>,
+    seconds_since_last_seen: Option<i64>,
 }
 
 #[post("/{version}")]
@@ -203,6 +204,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                 }
             }
         });
+
         must.as_array_mut()
             .ok_or(Error::new(
                 500,
@@ -225,6 +227,37 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                 "Failed to build query",
                 "query_building_exception",
                 Some("Failed to mutate must_not range virus detection as array"),
+            ))?
+            .push(range_query);
+    }
+
+    if let Some(seconds_since_last_seen) = body.seconds_since_last_seen {
+        let range_query = json!({
+            "bool": {
+                "should": [
+                    {
+                        "range": {
+                            "LastSeen": {
+                                "gte": (Utc::now() - Duration::seconds(seconds_since_last_seen)).timestamp_millis()
+                            }
+                        }
+                    },
+                    {
+                        "range": {
+                            "CheckedMagnet": {
+                                "gte": (Utc::now() - Duration::seconds(seconds_since_last_seen)).timestamp_millis()
+                            }
+                        }
+                    }
+                ]
+            }
+        });
+        must.as_array_mut()
+            .ok_or(Error::new(
+                500,
+                "Failed to build query",
+                "query_building_exception",
+                Some("Failed to mutate must range seconds_since_last_seen as array"),
             ))?
             .push(range_query);
     }
@@ -255,8 +288,6 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
     {
         query["query"]["bool"]["must_not"] = must_not;
     }
-
-    //return Ok(HttpResponse::Ok().json(query));
 
     // Create an Elasticsearch client
     let client = Elasticsearch::default();
