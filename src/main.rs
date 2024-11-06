@@ -1,7 +1,7 @@
 use crate::error_handling::{json_error_handler, Error};
 use actix_web::middleware::Logger;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer};
-use chrono::{Duration, Utc};
+use chrono::{Duration, Local, Utc};
 use elasticsearch::http::response::Response;
 use elasticsearch::{Elasticsearch, SearchParts};
 use lazy_static::lazy_static;
@@ -238,14 +238,14 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                     {
                         "range": {
                             "LastSeen": {
-                                "gte": (Utc::now() - Duration::seconds(seconds_since_last_seen)).timestamp_millis()
+                                "gte": (Utc::now() - Duration::seconds(seconds_since_last_seen)).with_timezone(&Local).to_rfc3339().split(".").collect::<Vec<&str>>()[0]
                             }
                         }
                     },
                     {
                         "range": {
                             "CheckedMagnet": {
-                                "gte": (Utc::now() - Duration::seconds(seconds_since_last_seen)).timestamp_millis()
+                                "gte": (Utc::now() - Duration::seconds(seconds_since_last_seen)).with_timezone(&Local).to_rfc3339().split(".").collect::<Vec<&str>>()[0]
                             }
                         }
                     }
