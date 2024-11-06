@@ -7,7 +7,7 @@ use elasticsearch::{Elasticsearch, SearchParts};
 use lazy_static::lazy_static;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 
 mod error_handling;
@@ -33,6 +33,16 @@ lazy_static! {
         let mut search_options: HashSet<&str> = HashSet::new();
         search_options.insert("score");
         return search_options;
+    };
+}
+
+lazy_static! {
+    static ref LIVE_MAPPING: HashMap<&'static str, &'static str> = {
+        let mut live_mapping: HashMap<&str, &str> = HashMap::new();
+        live_mapping.insert("Seeders", "LiveSeeders");
+        live_mapping.insert("Peers", "LivePeers");
+        live_mapping.insert("Grabs", "LiveGrabs");
+        return live_mapping;
     };
 }
 
@@ -256,21 +266,133 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
         query["query"]["bool"]["must_not"] = must_not;
     }
 
-    //return Ok(HttpResponse::Ok().json(query));
-
     // Create an Elasticsearch client
     let client = Elasticsearch::default();
-
-    let response = client
+    let mut response: Value = client
         .search(SearchParts::Index(&[INDEX]))
-        .body(query)
+        .body(&query)
         .from(from as i64)
         .size(size as i64)
         .send()
-        .await;
+        .await
+        .map_err(|e| Error::new(500, "Failed to parse response body", "parse_failed", Some(&e.to_string())))
+        .and_then(|r| Ok(serde_response(r)))?
+        .await?;
 
-    let formatted_result = format_response(response).await?;
-    Ok(HttpResponse::Ok().json(formatted_result))
+    println!("basic query: {}", query);
+
+    let incognitoed_result = if let Some(second_sort) = &query
+        .get("sort")
+        .and_then(|serde_obj| serde_obj.as_object())
+        .and_then(|obj| obj.keys().next())
+        .and_then(|sn| LIVE_MAPPING.get(sn.as_str()))
+    {
+        // Elasticsearch has no way of intersecting sorts, so we have to do 2 requests here
+        let sort_direction = body.order_direction.clone().unwrap_or_else(|| "desc".to_string()).to_lowercase();
+        query["sort"] = json!({
+            second_sort.to_string() : {
+                "order": sort_direction
+            }
+        });
+        let response_live: Value = client
+            .search(SearchParts::Index(&[INDEX]))
+            .body(&query)
+            .from(from as i64)
+            .size(size as i64)
+            .send()
+            .await
+            .map_err(|e| Error::new(500, "Failed to parse response body", "parse_failed", Some(&e.to_string())))
+            .and_then(|r| Ok(serde_response(r)))?
+            .await?;
+        println!("live query: {}", query);
+
+        let response = intersect_results(response, response_live, size, sort_direction)
+            .await
+            .map_err(|e| Error::new(500, "Failed to intersect results", "parse_failed", Some(&e.to_string())))?;
+        incognitoer::obscure(response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?
+    } else {
+        incognitoer::obscure(response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?
+    };
+
+    Ok(HttpResponse::Ok().json(incognitoed_result))
+}
+
+fn get_es_hits(es_value: Value) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    let obj = es_value.as_object().ok_or("Root is not an object")?;
+    let hits = obj.get("hits").ok_or("No 'hits' field in root")?;
+    let hits_obj = hits.as_object().ok_or("'hits' is not an object")?;
+    let hits_arr = hits_obj.get("hits").ok_or("'hits' field in 'hits' object is missing")?;
+    let arr = hits_arr.as_array().ok_or("'hits' is not an array")?;
+
+    Ok(arr.to_owned())
+}
+
+async fn intersect_results(
+    base_result: Value,
+    live_result: Value,
+    max_results: u16,
+    order_direction: String,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let mut intersected_value = base_result.clone();
+    let mut base_arr = get_es_hits(base_result)?;
+    let mut live_arr = get_es_hits(live_result)?;
+
+    // Since we're popping and appending, it needs to be reversed before doing the heavy lifting
+    base_arr.reverse();
+    live_arr.reverse();
+
+    let mut ids: HashSet<&str> = HashSet::new();
+    let mut intersected_hits: Vec<Value> = vec![];
+    for _ in 0..max_results {
+        // Find the array with the highest/lowest value and pop it
+        let live_value = live_arr
+            .first()
+            .and_then(|v| v.as_object())
+            .and_then(|hit| hit.get("sort"))
+            .and_then(|s_value| s_value.as_array())
+            .and_then(|s_arr| s_arr.first())
+            .and_then(|n| n.as_i64());
+
+        let base_value = base_arr
+            .first()
+            .and_then(|v| v.as_object())
+            .and_then(|hit| hit.get("sort"))
+            .and_then(|s_value| s_value.as_array())
+            .and_then(|s_arr| s_arr.first())
+            .and_then(|n| n.as_i64());
+
+        if live_value.is_none() && base_value.is_none() {
+            break;
+        }
+
+        let next_live_entry = {
+            loop {
+                let entry = live_arr.pop();
+                if entry.is_none() {
+                    return None;
+                }
+                let entry = entry.unwrap();
+                if entry.as_str().is_none() {
+                    return None;
+                }
+                let id = entry.as_str().unwrap();
+                if !ids.contains(id) {
+                    return Some(entry);
+                }
+            }
+        };
+
+        if let Some(entry) = live_arr.pop() {
+            ids.insert(entry["_id"]);
+            intersected_hits.push(entry);
+        }
+        if let Some(entry) = base_arr.pop() {
+            ids.insert(entry["_id"]);
+            intersected_hits.push(entry);
+        }
+    }
+    intersected_value["hits"]["hits"] = Value::Array(intersected_hits);
+    Ok(intersected_value)
 }
 
 #[get("/{version}")]
@@ -302,14 +424,20 @@ async fn api(path: web::Path<String>) -> Result<HttpResponse, Error> {
     });
 
     // Perform the search query
-    let response = client.search(SearchParts::Index(&[INDEX])).body(query).send().await;
+    let response = client
+        .search(SearchParts::Index(&[INDEX]))
+        .body(query)
+        .send()
+        .await
+        .map_err(|e| Error::new(500, "Failed to parse response body", "parse_failed", Some(&e.to_string())))?;
 
-    let formatted_result = format_response(response).await?;
-    Ok(HttpResponse::Ok().json(formatted_result))
+    let formatted_result = serde_response(response).await?;
+    let incognitoed_result =
+        incognitoer::obscure(formatted_result).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
+    Ok(HttpResponse::Ok().json(incognitoed_result))
 }
 
-async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Value, Error> {
-    let r = r.map_err(|e| Error::new(500, "Failed to execute search", "query_failed", Some(&e.to_string())))?;
+async fn serde_response(r: Response) -> Result<Value, Error> {
     let status_code = r.status_code();
     let value = r
         .json::<Value>()
@@ -348,10 +476,7 @@ async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Va
         return Err(Error::new(500, "Failed to execute search", "query_failed", Some("Unknown error")));
     }
 
-    let filtered_value =
-        incognitoer::obscure(value).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
-
-    return Ok(filtered_value);
+    return Ok(value);
 }
 
 #[tokio::main]
