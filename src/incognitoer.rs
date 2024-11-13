@@ -1,7 +1,7 @@
 // This file is meant to hide and obscure the db result a bit
 
 use crate::{KNABEN_DOMAIN, PROXY_DOMAIN};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -164,7 +164,14 @@ fn parse_date(date_str: &str) -> Option<DateTime<Utc>> {
 
         // Check timezone
         if !time.contains("+") && !time.contains("-") {
-            date_str += "+02:00";
+            let mut offset_in_sec = Local::now().offset().utc_minus_local();
+            // GMT+2 => -3600
+            let symbol_str = if offset_in_sec > 0 { "-" } else { "+" };
+            offset_in_sec = offset_in_sec.abs();
+
+            let hours: i32 = offset_in_sec / 60 / 60;
+            let minutes: i32 = offset_in_sec / 60 - hours * 60;
+            date_str += &format!("{}{:02}:{:02}", symbol_str, hours, minutes);
         }
         return DateTime::parse_from_rfc3339(&date_str).ok().and_then(|d| Some(d.with_timezone(&Utc)));
     }
@@ -238,6 +245,22 @@ pub fn obscure(mut val: Value) -> Result<Value, Box<dyn Error>> {
             for v in REQUIRED_FIELDS.iter() {
                 if hit_obj.get(v.to_owned()).is_none() {
                     hit_obj.insert(v.to_string(), Value::Null);
+                }
+            }
+
+            // Ensuring dates has timezones
+            if let Some(last_seen) = hit_obj.get_mut("lastSeen") {
+                if let Some(last_seen_str) = last_seen.as_str() {
+                    if let Some(fixed_date) = parse_date(last_seen_str) {
+                        *last_seen = Value::String(fixed_date.to_rfc3339());
+                    }
+                }
+            }
+            if let Some(date) = hit_obj.get_mut("date") {
+                if let Some(date_str) = date.as_str() {
+                    if let Some(fixed_date) = parse_date(date_str) {
+                        *date = Value::String(fixed_date.to_rfc3339());
+                    }
                 }
             }
 
