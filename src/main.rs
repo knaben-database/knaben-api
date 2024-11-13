@@ -3,6 +3,7 @@ use actix_web::middleware::Logger;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer};
 use chrono::{Duration, Local, Utc};
 use elasticsearch::http::response::Response;
+use elasticsearch::http::transport::Transport;
 use elasticsearch::{Elasticsearch, SearchParts};
 use lazy_static::lazy_static;
 use serde::Deserialize;
@@ -18,6 +19,18 @@ const PORT: u16 = 8001;
 const INDEX: &str = "torrent_cache2";
 const KNABEN_DOMAIN: &str = "knaben.eu";
 const PROXY_DOMAIN: &str = "knaben.xyz";
+const ELASTICSEARCH_HOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
+const ELASTICSEARCH_PORT: u16 = 9200;
+
+lazy_static! {
+    static ref TRANSPORT: Transport = {
+        let transport = Transport::single_node(&format!("http://{}:{}", ELASTICSEARCH_HOST, ELASTICSEARCH_PORT));
+        let _ = transport.as_ref().map_err(|e| {
+            eprintln!("{}", e);
+        });
+        return transport.unwrap();
+    };
+}
 
 lazy_static! {
     static ref SORT_DIRECTIONS: HashSet<&'static str> = {
@@ -290,7 +303,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
     }
 
     // Create an Elasticsearch client
-    let client = Elasticsearch::default();
+    let client = Elasticsearch::new(TRANSPORT.to_owned());
 
     let response = client
         .search(SearchParts::Index(&[INDEX]))
@@ -317,7 +330,7 @@ async fn api(path: web::Path<String>) -> Result<HttpResponse, Error> {
     }
 
     // Create an Elasticsearch client
-    let client = Elasticsearch::default();
+    let client = Elasticsearch::new(TRANSPORT.to_owned());
 
     // Define the search query
     let query = json!({
