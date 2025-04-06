@@ -16,8 +16,8 @@ mod incognitoer;
 
 const ADDR: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 const PORT: u16 = 8001;
-const INDEX: &str = "torrent_cache2";
-const KNABEN_DOMAIN: &str = "knaben.eu";
+const INDEX: &str = "torrent_cache3";
+const KNABEN_DOMAIN: &str = "knaben.org";
 const PROXY_DOMAIN: &str = "knaben.xyz";
 const ELASTICSEARCH_HOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 const ELASTICSEARCH_PORT: u16 = 9200;
@@ -111,7 +111,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
             None => false,
         };
 
-        let field = match body.search_field.as_ref() {
+        let field = match &body.search_field {
             Some(f) => Some(
                 incognitoer::format_field(f).map_err(|e| Error::new(400, "Failed to format field", "format_field_failed", Some(&e.to_string())))?,
             ),
@@ -120,14 +120,29 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
 
         if is_percentage {
             let field = field.unwrap_or("Title".to_string());
-            let match_query = json!({
-                "match": {
-                    field: {
-                        "query": q,
-                        "minimum_should_match": search_type
+            let match_query = if field == "Title" {
+                json!({
+                    "simple_query_string": {
+                      "query": q,
+                      "minimum_should_match": search_type,
+                      "fields": [
+                        "Title",
+                        "Title.fullword"
+                      ],
+                      "default_operator": "AND",
+                      "analyzer": "my_search_analyzer"
                     }
-                }
-            });
+                })
+            } else {
+                json!({
+                    "match": {
+                        field: {
+                            "query": q,
+                            "minimum_should_match": search_type
+                        }
+                    }
+                })
+            };
             must.as_array_mut()
                 .ok_or(Error::new(
                     500,

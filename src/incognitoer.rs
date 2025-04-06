@@ -68,13 +68,13 @@ lazy_static! {
     static ref SORTER: HashMap<&'static str, &'static str> = {
         let mut sort_map: HashMap<&str, &str> = HashMap::new();
 
-        sort_map.insert("title", "Title.keyword");
+        sort_map.insert("title", "Title.fullword");
         sort_map.insert("hash", "InfoHash.keyword");
         sort_map.insert("cachedOrigin", "CachedOrigin.keyword");
         sort_map.insert("tracker", "Tracker.keyword");
         sort_map.insert("trackerId", "TrackerId.keyword");
         sort_map.insert("lastSeen", "LastSeen");
-        sort_map.insert("grabs", "Grabs");
+        sort_map.insert("grabs", "LiveGrabs");
         sort_map.insert("seeders", "Seeders");
         sort_map.insert("peers", "Peers");
         sort_map.insert("categoryId", "Category");
@@ -106,7 +106,7 @@ lazy_static! {
         replace_map.insert("Tracker", "tracker");
         replace_map.insert("TrackerId", "trackerId");
         replace_map.insert("LastSeen", "lastSeen");
-        replace_map.insert("Grabs", "grabs");
+        replace_map.insert("LiveGrabs", "grabs");
         replace_map.insert("Seeders", "seeders");
         replace_map.insert("Peers", "peers");
         replace_map.insert("Category", "categoryId");
@@ -136,7 +136,7 @@ lazy_static! {
         replace_r_map.insert("tracker", "Tracker");
         replace_r_map.insert("trackerId", "TrackerId");
         replace_r_map.insert("lastSeen", "LastSeen");
-        replace_r_map.insert("grabs", "Grabs");
+        replace_r_map.insert("grabs", "LiveGrabs");
         replace_r_map.insert("seeders", "Seeders");
         replace_r_map.insert("peers", "Peers");
         replace_r_map.insert("categoryId", "Category");
