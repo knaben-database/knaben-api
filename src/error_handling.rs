@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::fmt;
 use actix_web::{error, HttpRequest, HttpResponse, ResponseError};
 use actix_web::http::StatusCode;
 use serde::Serialize;
@@ -41,8 +41,8 @@ impl Error {
     }
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", to_string_pretty(self).unwrap())
     }
 }

@@ -1,18 +1,22 @@
-use crate::error_handling::{json_error_handler, Error};
+use crate::error_handling::{Error, json_error_handler};
 use actix_web::middleware::Logger;
-use actix_web::{get, post, web, App, HttpResponse, HttpServer};
+use actix_web::{App, HttpResponse, HttpServer, get, post, web};
 use chrono::{Duration, Local, Utc};
 use elasticsearch::http::response::Response;
 use elasticsearch::http::transport::Transport;
 use elasticsearch::{Elasticsearch, SearchParts};
 use lazy_static::lazy_static;
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::fmt;
+use std::hash::Hash;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 mod error_handling;
 mod incognitoer;
+mod json_cacher;
 
 const ADDR: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 const PORT: u16 = 8001;
@@ -21,6 +25,18 @@ const KNABEN_DOMAIN: &str = "knaben.org";
 const PROXY_DOMAIN: &str = "knaben.xyz";
 const ELASTICSEARCH_HOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 const ELASTICSEARCH_PORT: u16 = 9200;
+const REDIS_HOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
+const REDIS_PORT: u16 = 6379;
+
+use bb8::Pool;
+use bb8_redis::RedisConnectionManager;
+use sha1_smol::Sha1;
+use crate::json_cacher::JsonCacherService;
+
+async fn create_redis_pool() -> Pool<RedisConnectionManager> {
+    let manager = RedisConnectionManager::new(format!("redis://{}:{}/", REDIS_HOST, REDIS_PORT)).unwrap();
+    Pool::builder().build(manager).await.unwrap()
+}
 
 lazy_static! {
     static ref TRANSPORT: Transport = {
@@ -37,7 +53,7 @@ lazy_static! {
         let mut sort_options: HashSet<&str> = HashSet::new();
         sort_options.insert("desc");
         sort_options.insert("asc");
-        return sort_options;
+        sort_options
     };
 }
 
@@ -45,11 +61,11 @@ lazy_static! {
     static ref SEARCH_OPTIONS: HashSet<&'static str> = {
         let mut search_options: HashSet<&str> = HashSet::new();
         search_options.insert("score");
-        return search_options;
+        search_options
     };
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Hash)]
 struct QueryBody {
     search_type: Option<String>,
     query: Option<String>,
@@ -63,9 +79,15 @@ struct QueryBody {
     hide_unsafe: Option<bool>,
     seconds_since_last_seen: Option<i64>,
 }
+impl fmt::Display for QueryBody {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", serde_json::to_string(self).unwrap())
+    }
+}
+
 
 #[post("/{version}")]
-async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result<HttpResponse, Error> {
+async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
     let version = path.into_inner();
     if !version.eq_ignore_ascii_case("v1") {
         return Err(Error::new(
@@ -74,6 +96,13 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
             "no_path_found",
             Some("Path must be /v1, that is the only path that is supported right now"),
         ));
+    }
+    
+    // Check cache and return early if hit
+    let cache_key = format!("knaben-api:{}", Sha1::from(&body.to_string()).digest().to_string());
+    if let Ok(Some(cached_result)) = cache.get(&cache_key).await {
+        let something: Value = serde_json::from_str(&cached_result).map_err(|e| Error::new(500, "Failed to parse cached result", "parse_failed", Some(&e.to_string())))?;
+        return Ok(HttpResponse::Ok().json(something));
     }
 
     let from = body.from.unwrap_or(0);
@@ -183,7 +212,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
                         "Invalid search option",
                         "invalid_search_option",
                         Some("The option provided needs to be \"score\" or \"100%\"."),
-                    ))
+                    ));
                 },
             }
         } else {
@@ -329,11 +358,16 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>) -> Result
         .await;
 
     let formatted_result = format_response(response).await?;
+    // Cache response
+    let _ = cache.set(&cache_key, &formatted_result.to_string(), 30).await.map_err(|e| {
+        eprintln!("FAILED TO CACHE RESPONSE: {e}");
+    });
+    
     Ok(HttpResponse::Ok().json(formatted_result))
 }
 
 #[get("/{version}")]
-async fn api(path: web::Path<String>) -> Result<HttpResponse, Error> {
+async fn api(path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
     let version = path.into_inner();
     if !version.eq_ignore_ascii_case("v1") {
         return Err(Error::new(
@@ -342,6 +376,12 @@ async fn api(path: web::Path<String>) -> Result<HttpResponse, Error> {
             "no_path_found",
             Some("Path must be /v1, that is the only path that is supported right now"),
         ));
+    }
+
+    let cache_key = "knaben-api:match_all";
+    if let Ok(Some(cached_result)) = cache.get(&cache_key.to_string()).await {
+        let something: Value = serde_json::from_str(&cached_result).map_err(|e| Error::new(500, "Failed to parse cached result", "parse_failed", Some(&e.to_string())))?;
+        return Ok(HttpResponse::Ok().json(something));
     }
 
     // Create an Elasticsearch client
@@ -364,6 +404,11 @@ async fn api(path: web::Path<String>) -> Result<HttpResponse, Error> {
     let response = client.search(SearchParts::Index(&[INDEX])).body(query).send().await;
 
     let formatted_result = format_response(response).await?;
+    // Cache response
+    let _ = cache.set(cache_key, &formatted_result.to_string(), 30).await.map_err(|e| {
+        eprintln!("FAILED TO CACHE RESPONSE: {e}");
+    });
+    
     Ok(HttpResponse::Ok().json(formatted_result))
 }
 
@@ -410,14 +455,17 @@ async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Va
     let filtered_value =
         incognitoer::obscure(value).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
 
-    return Ok(filtered_value);
+    Ok(filtered_value)
 }
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
-    HttpServer::new(|| {
+    let redis_pool = create_redis_pool().await;
+    let cache_service = Arc::new(JsonCacherService::new(redis_pool));
+
+    HttpServer::new(move || {
         App::new()
             .service(api)
             .service(api_post)
@@ -425,6 +473,7 @@ async fn main() -> std::io::Result<()> {
                 Err::<HttpResponse, _>(Error::new(404, "Invalid path", "invalid_path", None))
             }))
             .app_data(web::JsonConfig::default().error_handler(json_error_handler))
+            .app_data(web::Data::new(cache_service.clone()))
             .wrap(Logger::new("%{r}a \"%r\" %s %b \"%{User-Agent}i\" %T"))
     })
     .bind((ADDR, PORT))?
