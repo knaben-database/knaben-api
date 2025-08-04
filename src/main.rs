@@ -1,4 +1,3 @@
-use crate::error_handling::{Error, json_error_handler};
 use actix_web::middleware::Logger;
 use actix_web::{App, HttpResponse, HttpServer, get, post, web};
 use chrono::{Duration, Local, Utc};
@@ -11,40 +10,32 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::Hash;
-use std::net::Ipv4Addr;
 use std::sync::Arc;
+use bb8::Pool;
+use bb8_redis::RedisConnectionManager;
+use sha1_smol::Sha1;
 
 mod error_handling;
 mod incognitoer;
 mod json_cacher;
+pub mod config;
 
-const ADDR: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
-const PORT: u16 = 8001;
-const INDEX: &str = "torrent_cache3";
-const KNABEN_DOMAIN: &str = "knaben.org";
-const PROXY_DOMAIN: &str = "knaben.xyz";
-const ELASTICSEARCH_HOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
-const ELASTICSEARCH_PORT: u16 = 9200;
-const REDIS_HOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
-const REDIS_PORT: u16 = 6379;
-
-use bb8::Pool;
-use bb8_redis::RedisConnectionManager;
-use sha1_smol::Sha1;
+use crate::error_handling::{Error, json_error_handler};
 use crate::json_cacher::JsonCacherService;
+use crate::config::CONFIG;
 
 async fn create_redis_pool() -> Pool<RedisConnectionManager> {
-    let manager = RedisConnectionManager::new(format!("redis://{}:{}/", REDIS_HOST, REDIS_PORT)).unwrap();
+    let manager = RedisConnectionManager::new(format!("redis://{}:{}/", CONFIG.redis_host, CONFIG.redis_port)).unwrap();
     Pool::builder().build(manager).await.unwrap()
 }
 
 lazy_static! {
     static ref TRANSPORT: Transport = {
-        let transport = Transport::single_node(&format!("http://{}:{}", ELASTICSEARCH_HOST, ELASTICSEARCH_PORT));
+        let transport = Transport::single_node(&format!("http://{}:{}", CONFIG.elasticsearch_host, CONFIG.elasticsearch_port));
         let _ = transport.as_ref().map_err(|e| {
             eprintln!("{}", e);
         });
-        return transport.unwrap();
+        transport.unwrap()
     };
 }
 
@@ -101,8 +92,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>, cache: we
     // Check cache and return early if hit
     let cache_key = format!("knaben-api:{}", Sha1::from(&body.to_string()).digest().to_string());
     if let Ok(Some(cached_result)) = cache.get(&cache_key).await {
-        let something: Value = serde_json::from_str(&cached_result).map_err(|e| Error::new(500, "Failed to parse cached result", "parse_failed", Some(&e.to_string())))?;
-        return Ok(HttpResponse::Ok().json(something));
+        return Ok(HttpResponse::Ok().json(cached_result));
     }
 
     let from = body.from.unwrap_or(0);
@@ -350,7 +340,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>, cache: we
     let client = Elasticsearch::new(TRANSPORT.to_owned());
 
     let response = client
-        .search(SearchParts::Index(&[INDEX]))
+        .search(SearchParts::Index(&[&CONFIG.index]))
         .body(query)
         .from(from as i64)
         .size(size as i64)
@@ -359,7 +349,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>, cache: we
 
     let formatted_result = format_response(response).await?;
     // Cache response
-    let _ = cache.set(&cache_key, &formatted_result.to_string(), 30).await.map_err(|e| {
+    let _ = cache.set(&cache_key, &formatted_result, 30).await.map_err(|e| {
         eprintln!("FAILED TO CACHE RESPONSE: {e}");
     });
     
@@ -380,8 +370,7 @@ async fn api(path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) 
 
     let cache_key = "knaben-api:match_all";
     if let Ok(Some(cached_result)) = cache.get(&cache_key.to_string()).await {
-        let something: Value = serde_json::from_str(&cached_result).map_err(|e| Error::new(500, "Failed to parse cached result", "parse_failed", Some(&e.to_string())))?;
-        return Ok(HttpResponse::Ok().json(something));
+        return Ok(HttpResponse::Ok().json(cached_result));
     }
 
     // Create an Elasticsearch client
@@ -401,11 +390,11 @@ async fn api(path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) 
     });
 
     // Perform the search query
-    let response = client.search(SearchParts::Index(&[INDEX])).body(query).send().await;
+    let response = client.search(SearchParts::Index(&[&CONFIG.index])).body(query).send().await;
 
     let formatted_result = format_response(response).await?;
     // Cache response
-    let _ = cache.set(cache_key, &formatted_result.to_string(), 30).await.map_err(|e| {
+    let _ = cache.set(cache_key, &formatted_result, 30).await.map_err(|e| {
         eprintln!("FAILED TO CACHE RESPONSE: {e}");
     });
     
@@ -476,7 +465,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(cache_service.clone()))
             .wrap(Logger::new("%{r}a \"%r\" %s %b \"%{User-Agent}i\" %T"))
     })
-    .bind((ADDR, PORT))?
+    .bind((CONFIG.addr, CONFIG.port))?
     .run()
     .await
 }

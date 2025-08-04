@@ -1,12 +1,13 @@
 // This file is meant to hide and obscure the db result a bit
 
-use crate::{KNABEN_DOMAIN, PROXY_DOMAIN};
 use chrono::{DateTime, Local, Utc};
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::ops::Deref;
+
+use crate::config::CONFIG;
 
 #[cfg(test)]
 mod tests {
@@ -203,7 +204,7 @@ pub fn obscure(mut val: Value) -> Result<Value, Box<dyn Error>> {
             if let Some(v) = hit_obj.get("link") {
                 if let Some(link) = v.as_str() {
                     let mut link = link.to_string();
-                    link = link.replace("http://127.0.0.1:9117/", &format!("https://{}/live/", KNABEN_DOMAIN));
+                    link = link.replace("http://127.0.0.1:9117/", &format!("https://{}/live/", CONFIG.knaben_domain));
                     link = link.replace("***REMOVED***", "***REMOVED***");
                     link = link.replace("jackett_apikey=***REMOVED***&", "");
                     if let Some(details) = hit_obj.get("details") {
@@ -219,7 +220,7 @@ pub fn obscure(mut val: Value) -> Result<Value, Box<dyn Error>> {
                         if details.contains("://") {
                             let beginstring = details.split("://").collect::<Vec<&str>>()[1];
                             let endstring = beginstring.split("/").collect::<Vec<&str>>()[0];
-                            let new_details = details.replace(endstring, &format!("{}/thepiratebay", PROXY_DOMAIN));
+                            let new_details = details.replace(endstring, &format!("{}/thepiratebay", CONFIG.proxy_domain));
                             hit_obj.insert("details".to_string(), Value::String(new_details));
                         }
                     }
