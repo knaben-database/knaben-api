@@ -5,11 +5,7 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     pub static ref CONFIG: Config = {
-        let config = Config::from_env().unwrap_or_else(|e| {
-            println!("Failed to load config from environment: {}", e);
-            println!("Using default config");
-            Config::default()
-        });
+        let config = Config::from_env();
         println!("Loaded config {}", config);
         config
     };
@@ -22,7 +18,7 @@ mod tests {
 
     #[test]
     fn test_all_config_fields_exists() {
-        let config = Config::from_env().unwrap_or_default();
+        let config = Config::from_env();
         let config_string = config.to_string();
         let config_debug = format!("{:?}", config).trim_start_matches("Config {").trim_end_matches("}").to_string();
         
@@ -90,33 +86,45 @@ impl Display for Config {
 }
 
 impl Config {
-    fn from_env() -> Result<Self, std::net::AddrParseError> {
+    fn from_env() -> Self {
         dotenv::dotenv().ok();
 
         let addr = env::var("ADDR")
-            .map(|s| s.parse())
-            .unwrap_or(Ok(Self::default().addr))?;
+            .map(|s| s.parse().expect("Failed to parse ADDR environment variable into an IPv4 Address"))
+            .unwrap_or(Self::default().addr);
 
         let port = env::var("PORT")
-            .map(|s| s.parse().unwrap_or(Self::default().port))
+            .map(|s| s.parse().expect("Failed to parse PORT environment variable into an unsigned 16 integer"))
             .unwrap_or(Self::default().port);
 
+        let index = env::var("INDEX").unwrap_or(Self::default().index);
+
+        let knaben_domain = env::var("KNABEN_DOMAIN").unwrap_or(Self::default().knaben_domain);
+
+        let proxy_domain = env::var("PROXY_DOMAIN").unwrap_or(Self::default().proxy_domain);
+
+        let elasticsearch_host = env::var("ELASTICSEARCH_HOST").unwrap_or(Self::default().elasticsearch_host);
+
         let elasticsearch_port = env::var("ELASTICSEARCH_PORT")
-            .map(|s| s.parse().unwrap_or(Self::default().elasticsearch_port))
+            .map(|s| s.parse().expect("Failed to parse ELASTICSEARCH_PORT environment variable into an unsigned 16 integer"))
             .unwrap_or(Self::default().elasticsearch_port);
 
-        Ok(Self {
+        let redis_port = env::var("REDIS_PORT")
+            .map(|s| s.parse().expect("Failed to parse REDIS_PORT environment variable into an unsigned 16 integer"))
+            .unwrap_or(Self::default().redis_port);
+
+        let redis_host = env::var("REDIS_HOST").unwrap_or(Self::default().redis_host);
+
+        Self {
             addr,
             port,
-            index: env::var("INDEX").unwrap_or(Self::default().index),
-            knaben_domain: env::var("KNABEN_DOMAIN").unwrap_or(Self::default().knaben_domain),
-            proxy_domain: env::var("PROXY_DOMAIN").unwrap_or(Self::default().proxy_domain),
-            elasticsearch_host: env::var("ELASTICSEARCH_HOST").unwrap_or(Self::default().elasticsearch_host),
+            index,
+            knaben_domain,
+            proxy_domain,
+            elasticsearch_host,
             elasticsearch_port,
-            redis_host: env::var("REDIS_HOST").unwrap_or(Self::default().redis_host),
-            redis_port: env::var("REDIS_PORT")
-                .map(|s| s.parse().unwrap_or(Self::default().redis_port))
-                .unwrap_or(Self::default().redis_port),
-        })
+            redis_host,
+            redis_port
+        }
     }
 }

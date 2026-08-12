@@ -347,13 +347,16 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>, cache: we
         .send()
         .await;
 
-    let formatted_result = format_response(response).await?;
+    let json_response = format_response(response).await?;
+
+    let obscured = incognitoer::obscure(json_response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
+
     // Cache response
-    let _ = cache.set(&cache_key, &formatted_result, 30).await.map_err(|e| {
+    let _ = cache.set(&cache_key, &obscured, 30).await.map_err(|e| {
         eprintln!("FAILED TO CACHE RESPONSE: {e}");
     });
     
-    Ok(HttpResponse::Ok().json(formatted_result))
+    Ok(HttpResponse::Ok().json(obscured))
 }
 
 #[get("/{version}")]
@@ -391,14 +394,14 @@ async fn api(path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) 
 
     // Perform the search query
     let response = client.search(SearchParts::Index(&[&CONFIG.index])).body(query).send().await;
-
-    let formatted_result = format_response(response).await?;
+    let json_response = format_response(response).await?;
+    let obscured = incognitoer::obscure(json_response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
     // Cache response
-    let _ = cache.set(cache_key, &formatted_result, 30).await.map_err(|e| {
+    let _ = cache.set(cache_key, &obscured, 30).await.map_err(|e| {
         eprintln!("FAILED TO CACHE RESPONSE: {e}");
     });
-    
-    Ok(HttpResponse::Ok().json(formatted_result))
+
+    Ok(HttpResponse::Ok().json(obscured))
 }
 
 async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Value, Error> {
@@ -441,10 +444,7 @@ async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Va
         return Err(Error::new(500, "Failed to execute search", "query_failed", Some("Unknown error")));
     }
 
-    let filtered_value =
-        incognitoer::obscure(value).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
-
-    Ok(filtered_value)
+    Ok(value)
 }
 
 #[tokio::main]
