@@ -1,5 +1,5 @@
 use actix_web::middleware::Logger;
-use actix_web::{App, HttpResponse, HttpServer, get, post, web};
+use actix_web::{App, HttpResponse, HttpServer, get, post, web, HttpRequest};
 use chrono::{Duration, Local, Utc};
 use elasticsearch::http::response::Response;
 use elasticsearch::http::transport::Transport;
@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::Hash;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
@@ -78,7 +79,7 @@ impl fmt::Display for QueryBody {
 
 
 #[post("/{version}")]
-async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
+async fn api_post(req: HttpRequest, path: web::Path<String>, body: web::Json<QueryBody>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
     let version = path.into_inner();
     if !version.eq_ignore_ascii_case("v1") {
         return Err(Error::new(
@@ -348,6 +349,9 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>, cache: we
         .await;
 
     let json_response = format_response(response).await?;
+    if let Some(took_ms) = json_response.get("took").and_then(|v| v.as_u64()) {
+        println!("[DEBUG] {}s {}", took_ms as f64 / 1000.0, get_ip_address(req).unwrap_or(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
+    }
 
     let obscured = incognitoer::obscure(json_response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
 
@@ -360,7 +364,7 @@ async fn api_post(path: web::Path<String>, body: web::Json<QueryBody>, cache: we
 }
 
 #[get("/{version}")]
-async fn api(path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
+async fn api(req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
     let version = path.into_inner();
     if !version.eq_ignore_ascii_case("v1") {
         return Err(Error::new(
@@ -395,6 +399,9 @@ async fn api(path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) 
     // Perform the search query
     let response = client.search(SearchParts::Index(&[&CONFIG.index])).body(query).send().await;
     let json_response = format_response(response).await?;
+    if let Some(took_ms) = json_response.get("took").and_then(|v| v.as_u64()) {
+        println!("[DEBUG] {}s {}", took_ms as f64 / 1000.0, get_ip_address(req).unwrap_or(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
+    }
     let obscured = incognitoer::obscure(json_response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
     // Cache response
     let _ = cache.set(cache_key, &obscured, 30).await.map_err(|e| {
@@ -402,6 +409,19 @@ async fn api(path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) 
     });
 
     Ok(HttpResponse::Ok().json(obscured))
+}
+
+fn get_ip_address(req: HttpRequest) -> Option<IpAddr> {
+    // Prioritize real ip header first
+    if let Some(ip) = req.connection_info().realip_remote_addr().and_then(|addr| addr.parse::<IpAddr>().ok()) {
+        return Some(ip);
+    }
+    // Then do the direct ip otherwise
+    if let Some(ip) = req.peer_addr() {
+        return Some(ip.ip());
+    }
+
+    None
 }
 
 async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Value, Error> {
