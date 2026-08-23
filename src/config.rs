@@ -62,6 +62,10 @@ pub struct Config {
     pub elasticsearch_port: u16,
     pub redis_host: String,
     pub redis_port: u16,
+    // For each request, it takes a certain time to process the request.
+    // What we can do to rate limit fairly, is to check the time it took, and to multiply it by this value.
+    // The user will only be able to send a request once per time_took x rate_limiting_multiplier
+    pub rate_limiting_multiplier: Option<f32>
 }
 
 impl Default for Config {
@@ -76,12 +80,18 @@ impl Default for Config {
             elasticsearch_port: 9200,
             redis_host: "127.0.0.1".to_string(),
             redis_port: 6379,
+            rate_limiting_multiplier: None,
         }
     }
 }
 impl Display for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\n\n  ADDR={}\n  PORT={}\n  KNABEN_DOMAIN={}\n  PROXY_DOMAIN={}\n  ELASTICSEARCH_HOST={}\n  ELASTICSEARCH_PORT={}\n  INDEX={}\n  REDIS_HOST={}\n  REDIS_PORT={}\n", self.addr, self.port, self.knaben_domain, self.proxy_domain, self.elasticsearch_host, self.elasticsearch_port, self.index, self.redis_host, self.redis_port)
+        let mut str = format!("\n\n  ADDR={}\n  PORT={}\n  KNABEN_DOMAIN={}\n  PROXY_DOMAIN={}\n  ELASTICSEARCH_HOST={}\n  ELASTICSEARCH_PORT={}\n  INDEX={}\n  REDIS_HOST={}\n  REDIS_PORT={}\n", self.addr, self.port, self.knaben_domain, self.proxy_domain, self.elasticsearch_host, self.elasticsearch_port, self.index, self.redis_host, self.redis_port);
+        if let Some(rlm) = &self.rate_limiting_multiplier {
+            str += "  RATE_LIMITING=enabled\n";
+            str += &format!("  RATE_LIMITING_MULTIPLIER={}\n", rlm);
+        }
+        write!(f, "{}", str)
     }   
 }
 
@@ -115,6 +125,10 @@ impl Config {
 
         let redis_host = env::var("REDIS_HOST").unwrap_or(Self::default().redis_host);
 
+        let rate_limiting_multiplier = env::var("RATE_LIMITING_MULTIPLIER")
+            .map(|s| s.parse().expect("Failed to parse RATE_LIMITING environment variable into a float number"))
+            .ok();
+
         Self {
             addr,
             port,
@@ -124,7 +138,8 @@ impl Config {
             elasticsearch_host,
             elasticsearch_port,
             redis_host,
-            redis_port
+            redis_port,
+            rate_limiting_multiplier
         }
     }
 }
