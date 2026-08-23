@@ -10,20 +10,24 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::Hash;
-use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
+use rand::Rng;
 use sha1_smol::Sha1;
+use tokio::time::sleep;
 
 mod error_handling;
 mod incognitoer;
 mod json_cacher;
 pub mod config;
+mod rate_limiting;
+mod utils;
 
 use crate::error_handling::{Error, json_error_handler};
 use crate::json_cacher::JsonCacherService;
 use crate::config::CONFIG;
+use crate::rate_limiting::{is_blocked, BlockMethod};
 
 async fn create_redis_pool() -> Pool<RedisConnectionManager> {
     let manager = RedisConnectionManager::new(format!("redis://{}:{}/", CONFIG.redis_host, CONFIG.redis_port)).unwrap();
@@ -57,6 +61,8 @@ lazy_static! {
     };
 }
 
+const MATCH_ALL_CACHE_KEY: &str = "knaben-api:match_all";
+
 #[derive(Deserialize, Serialize, Hash)]
 struct QueryBody {
     search_type: Option<String>,
@@ -88,6 +94,28 @@ async fn api_post(req: HttpRequest, path: web::Path<String>, body: web::Json<Que
             "no_path_found",
             Some("Path must be /v1, that is the only path that is supported right now"),
         ));
+    }
+
+    match is_blocked(req) {
+        // Try to hide that we're sending them a bullshit response
+        BlockMethod::Troll => {
+            let sleep_ms = rand::rng().random_range(100..=21000);
+            sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
+
+            // Try to get a random cached response
+            if let Ok(Some((_, cached_result))) = cache.random_entry("knaben-api:*").await {
+                return Ok(HttpResponse::Ok().json(cached_result));
+            }
+
+            // Check if we have the catch-all cached response
+            if let Ok(Some(cached_result)) = cache.get(&MATCH_ALL_CACHE_KEY.to_string()).await {
+                return Ok(HttpResponse::Ok().json(cached_result));
+            }
+
+            // Otherwise generate a fresh troll response
+            return rate_limiting::troll_response();
+        }
+        _ => {}
     }
     
     // Check cache and return early if hit
@@ -349,9 +377,6 @@ async fn api_post(req: HttpRequest, path: web::Path<String>, body: web::Json<Que
         .await;
 
     let json_response = format_response(response).await?;
-    if let Some(took_ms) = json_response.get("took").and_then(|v| v.as_u64()) {
-        println!("[DEBUG] {}s {}", took_ms as f64 / 1000.0, get_ip_address(req).unwrap_or(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
-    }
 
     let obscured = incognitoer::obscure(json_response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
 
@@ -364,7 +389,7 @@ async fn api_post(req: HttpRequest, path: web::Path<String>, body: web::Json<Que
 }
 
 #[get("/{version}")]
-async fn api(req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
+async fn api(_req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
     let version = path.into_inner();
     if !version.eq_ignore_ascii_case("v1") {
         return Err(Error::new(
@@ -375,8 +400,7 @@ async fn api(req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<Jso
         ));
     }
 
-    let cache_key = "knaben-api:match_all";
-    if let Ok(Some(cached_result)) = cache.get(&cache_key.to_string()).await {
+    if let Ok(Some(cached_result)) = cache.get(&MATCH_ALL_CACHE_KEY.to_string()).await {
         return Ok(HttpResponse::Ok().json(cached_result));
     }
 
@@ -399,29 +423,13 @@ async fn api(req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<Jso
     // Perform the search query
     let response = client.search(SearchParts::Index(&[&CONFIG.index])).body(query).send().await;
     let json_response = format_response(response).await?;
-    if let Some(took_ms) = json_response.get("took").and_then(|v| v.as_u64()) {
-        println!("[DEBUG] {}s {}", took_ms as f64 / 1000.0, get_ip_address(req).unwrap_or(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
-    }
     let obscured = incognitoer::obscure(json_response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
     // Cache response
-    let _ = cache.set(cache_key, &obscured, 30).await.map_err(|e| {
+    let _ = cache.set(MATCH_ALL_CACHE_KEY, &obscured, 30).await.map_err(|e| {
         eprintln!("FAILED TO CACHE RESPONSE: {e}");
     });
 
     Ok(HttpResponse::Ok().json(obscured))
-}
-
-fn get_ip_address(req: HttpRequest) -> Option<IpAddr> {
-    // Prioritize real ip header first
-    if let Some(ip) = req.connection_info().realip_remote_addr().and_then(|addr| addr.parse::<IpAddr>().ok()) {
-        return Some(ip);
-    }
-    // Then do the direct ip otherwise
-    if let Some(ip) = req.peer_addr() {
-        return Some(ip.ip());
-    }
-
-    None
 }
 
 async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Value, Error> {
