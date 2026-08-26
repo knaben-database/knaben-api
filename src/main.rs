@@ -11,23 +11,26 @@ use std::collections::HashSet;
 use std::fmt;
 use std::hash::Hash;
 use std::sync::Arc;
+use std::io::Write;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
+use env_logger::Builder;
 use rand::Rng;
 use sha1_smol::Sha1;
 use tokio::time::sleep;
 
 mod error_handling;
 mod incognitoer;
-mod json_cacher;
+mod redis_service;
 pub mod config;
 mod rate_limiting;
 mod utils;
 
 use crate::error_handling::{Error, json_error_handler};
-use crate::json_cacher::JsonCacherService;
+use crate::redis_service::JsonCacherService;
 use crate::config::CONFIG;
-use crate::rate_limiting::{is_blocked, BlockMethod};
+use crate::rate_limiting::{BlockMethod};
+use crate::utils::get_ip_address;
 
 async fn create_redis_pool() -> Pool<RedisConnectionManager> {
     let manager = RedisConnectionManager::new(format!("redis://{}:{}/", CONFIG.redis_host, CONFIG.redis_port)).unwrap();
@@ -38,7 +41,7 @@ lazy_static! {
     static ref TRANSPORT: Transport = {
         let transport = Transport::single_node(&format!("http://{}:{}", CONFIG.elasticsearch_host, CONFIG.elasticsearch_port));
         let _ = transport.as_ref().map_err(|e| {
-            eprintln!("{}", e);
+            log::error!("Failed to connect to Elasticsearch: {}", e);
         });
         transport.unwrap()
     };
@@ -96,9 +99,17 @@ async fn api_post(req: HttpRequest, path: web::Path<String>, body: web::Json<Que
         ));
     }
 
-    match is_blocked(req) {
+    let user_agent = req.headers().get("User-Agent").and_then(|ua| ua.to_str().ok()).unwrap_or("-");
+    let ip = get_ip_address(&req);
+    let ip_str = ip.map(|ip|ip.to_string()).unwrap_or("None".to_string());
+
+    log::debug!("[{} {}] {}", ip_str, user_agent, body.to_string());
+
+    // Checks against hardcoded blocking rules
+    match rate_limiting::is_blocked(&req) {
         // Try to hide that we're sending them a bullshit response
         BlockMethod::Troll => {
+            log::info!("BLOCKED TROLL: {ip_str} {user_agent}");
             let sleep_ms = rand::rng().random_range(100..=21000);
             sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
 
@@ -121,8 +132,14 @@ async fn api_post(req: HttpRequest, path: web::Path<String>, body: web::Json<Que
     // Check cache and return early if hit
     let cache_key = format!("knaben-api:{}", Sha1::from(&body.to_string()).digest().to_string());
     if let Ok(Some(cached_result)) = cache.get(&cache_key).await {
+        log::debug!("CACHE HIT: {ip_str} {user_agent}");
         return Ok(HttpResponse::Ok().json(cached_result));
     }
+
+    // Dynamic rate limiting
+    // if rate_limiting::is_rate_limited(&req).await {
+    //     return Err(Error::new(429, "Too many concurrent connections", "rate_limited", None));
+    // }
 
     let from = body.from.unwrap_or(0);
     let mut size = body.size.unwrap_or(150);
@@ -382,14 +399,16 @@ async fn api_post(req: HttpRequest, path: web::Path<String>, body: web::Json<Que
 
     // Cache response
     let _ = cache.set(&cache_key, &obscured, 30).await.map_err(|e| {
-        eprintln!("FAILED TO CACHE RESPONSE: {e}");
+        log::warn!("FAILED TO CACHE RESPONSE: {e}");
     });
+
+    log::debug!("NEW SEARCH: {ip_str} {user_agent}");
     
     Ok(HttpResponse::Ok().json(obscured))
 }
 
 #[get("/{version}")]
-async fn api(_req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
+async fn api(req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<JsonCacherService>>) -> Result<HttpResponse, Error> {
     let version = path.into_inner();
     if !version.eq_ignore_ascii_case("v1") {
         return Err(Error::new(
@@ -400,7 +419,12 @@ async fn api(_req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<Js
         ));
     }
 
+    let user_agent = req.headers().get("User-Agent").and_then(|ua| ua.to_str().ok()).unwrap_or("-");
+    let ip = get_ip_address(&req);
+    let ip_str = ip.map(|ip|ip.to_string()).unwrap_or("None".to_string());
+
     if let Ok(Some(cached_result)) = cache.get(&MATCH_ALL_CACHE_KEY.to_string()).await {
+        log::debug!("CACHE HIT: {ip_str} {user_agent}");
         return Ok(HttpResponse::Ok().json(cached_result));
     }
 
@@ -426,8 +450,10 @@ async fn api(_req: HttpRequest, path: web::Path<String>, cache: web::Data<Arc<Js
     let obscured = incognitoer::obscure(json_response).map_err(|e| Error::new(500, "Failed to filter result", "filter_failed", Some(&e.to_string())))?;
     // Cache response
     let _ = cache.set(MATCH_ALL_CACHE_KEY, &obscured, 30).await.map_err(|e| {
-        eprintln!("FAILED TO CACHE RESPONSE: {e}");
+        log::warn!("FAILED TO CACHE RESPONSE: {e}");
     });
+
+    log::debug!("NEW SEARCH: {ip_str} {user_agent}");
 
     Ok(HttpResponse::Ok().json(obscured))
 }
@@ -477,7 +503,22 @@ async fn format_response(r: Result<Response, elasticsearch::Error>) -> Result<Va
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+    let mut builder = Builder::from_env(env_logger::Env::new().default_filter_or("info"));
+
+    if std::env::var("NO_LOG_DATETIME").map(|v| v == "1").unwrap_or(false) {
+        // Custom format without timestamp
+        builder
+            .format(|buf, record| {
+                writeln!(buf, "[{}] {}", record.level(), record.args())
+            })
+            .init();
+    } else {
+        builder
+            .format(|buf, record| {
+                writeln!(buf, "[{} {}] {}", buf.timestamp(), record.level(), record.args())
+            })
+            .init();
+    }
 
     let redis_pool = create_redis_pool().await;
     let cache_service = Arc::new(JsonCacherService::new(redis_pool));

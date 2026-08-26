@@ -20,7 +20,7 @@ pub enum BlockMethod {
     None
 }
 
-pub fn is_blocked(req: HttpRequest) -> BlockMethod {
+pub fn is_blocked(req: &HttpRequest) -> BlockMethod {
     let Some(_ip) = utils::get_ip_address(&req) else {
         return BlockMethod::ContactSupport;
     };
@@ -43,4 +43,8 @@ pub fn troll_response() -> Result<HttpResponse, error_handling::Error> {
         );
 
     Ok(HttpResponse::Ok().json(data))
+}
+
+pub async fn _is_rate_limited(_req: &HttpRequest) -> bool {
+    todo!()
 }

@@ -86,7 +86,7 @@ impl Default for Config {
 }
 impl Display for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut str = format!("\n\n  ADDR={}\n  PORT={}\n  KNABEN_DOMAIN={}\n  PROXY_DOMAIN={}\n  ELASTICSEARCH_HOST={}\n  ELASTICSEARCH_PORT={}\n  INDEX={}\n  REDIS_HOST={}\n  REDIS_PORT={}\n", self.addr, self.port, self.knaben_domain, self.proxy_domain, self.elasticsearch_host, self.elasticsearch_port, self.index, self.redis_host, self.redis_port);
+        let str = format!("\n\n  ADDR={}\n  PORT={}\n  KNABEN_DOMAIN={}\n  PROXY_DOMAIN={}\n  ELASTICSEARCH_HOST={}\n  ELASTICSEARCH_PORT={}\n  INDEX={}\n  REDIS_HOST={}\n  REDIS_PORT={}\n", self.addr, self.port, self.knaben_domain, self.proxy_domain, self.elasticsearch_host, self.elasticsearch_port, self.index, self.redis_host, self.redis_port);
         // if let Some(rlm) = &self.rate_limiting_multiplier {
         //     str += "  RATE_LIMITING=enabled\n";
         //     str += &format!("  RATE_LIMITING_MULTIPLIER={}\n", rlm);
