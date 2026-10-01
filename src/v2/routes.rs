@@ -365,8 +365,6 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
     });
 
     log::debug!("NEW SEARCH: {ip_str} {user_agent}");
-    log::info!("from: {}, size: {}, index: {}", query.from, query.size, CONFIG.index);
-    log::info!("{}", es_query);
 
     Ok(HttpResponse::Ok()
         .insert_header(("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=60"))
