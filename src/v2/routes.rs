@@ -42,6 +42,7 @@ pub async fn search(req: HttpRequest, query: web::Query<SearchQuery>, cache: web
     let mut es_query = json!({});
     let mut must: Vec<Value> = vec!();
     let mut must_not: Vec<Value> = vec!();
+    let mut filters: Vec<Value> = vec!();
 
     if let Some(order_by) = &query.order_by {
         let sort = incognitoer::format_sort(order_by).map_err(|e| Error::new(400, "Failed to order by", "sort_failed", Some(&e.to_string())))?;
@@ -91,16 +92,16 @@ pub async fn search(req: HttpRequest, query: web::Query<SearchQuery>, cache: web
 
 
     if !query.categories.is_empty()  {
-        es_query["query"]["bool"]["filter"] = json!({
+        filters.push(json!({
             "terms": {
                 "Category": query.categories
             }
-        });
+        }));
     }
 
     if !query.trackers.is_empty()  {
-        must.push(json!({
-            "match": {
+        filters.push(json!({
+            "terms": {
                 "TrackerId": query.trackers
             }
         }));
@@ -118,25 +119,25 @@ pub async fn search(req: HttpRequest, query: web::Query<SearchQuery>, cache: web
     }
 
     if !query.show_unsafe {
-        must.push(json!({
+        filters.push(json!({
             "range": {
                 "LastSeen": {
                     "gte": (Utc::now() - Duration::days(90)).timestamp_millis()
                 }
             }
         }));
-        must_not.push(json!({
+        filters.push(json!({
             "range": {
                 "VirusDetection": {
-                    "gt": 0.6
+                    "lt": 0.6
                 }
             }
         }));
     }
 
     if !query.show_dead_torrents {
-        must.push(json!({ "range": { "Seeders": { "gt": 0 } } }));
-        must.push(json!({
+        filters.push(json!({ "range": { "Seeders": { "gt": 0 } } }));
+        filters.push(json!({
             "bool": {
                 "should": [
                     { "range": { "LiveSeeders": { "gt": 0 } } },
@@ -148,7 +149,7 @@ pub async fn search(req: HttpRequest, query: web::Query<SearchQuery>, cache: web
     }
 
     if let Some(seconds_since_last_seen) = query.seconds_since_last_seen {
-        must.push(json!({
+        filters.push(json!({
             "bool": {
                 "should": [
                     {
@@ -165,7 +166,8 @@ pub async fn search(req: HttpRequest, query: web::Query<SearchQuery>, cache: web
                             }
                         }
                     }
-                ]
+                ],
+                "minimum_should_match": 1
             }
         }));
     }
@@ -176,6 +178,9 @@ pub async fn search(req: HttpRequest, query: web::Query<SearchQuery>, cache: web
     }
     if !must_not.is_empty() {
         es_query["query"]["bool"]["must_not"] = Value::Array(must_not);
+    }
+    if !filters.is_empty() {
+        es_query["query"]["bool"]["filter"] = Value::Array(filters);
     }
 
     // Create an Elasticsearch client
@@ -237,6 +242,7 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
     let mut es_query = json!({});
     let mut must: Vec<Value> = vec!();
     let mut must_not: Vec<Value> = vec!();
+    let mut filters: Vec<Value> = vec!();
 
     let sort = incognitoer::format_sort(&query.order_by).map_err(|e| Error::new(400, "Failed to order by", "sort_failed", Some(&e.to_string())))?;
     es_query["sort"][sort] = json!({
@@ -244,16 +250,16 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
     });
 
     if !query.categories.is_empty()  {
-        es_query["query"]["bool"]["filter"] = json!({
+        filters.push(json!({
             "terms": {
                 "Category": query.categories
             }
-        });
+        }));
     }
 
     if !query.trackers.is_empty()  {
-        must.push(json!({
-            "match": {
+        filters.push(json!({
+            "terms": {
                 "TrackerId": query.trackers
             }
         }));
@@ -271,25 +277,25 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
     }
 
     if !query.show_unsafe {
-        must.push(json!({
+        filters.push(json!({
             "range": {
                 "LastSeen": {
                     "gte": (Utc::now() - Duration::days(90)).timestamp_millis()
                 }
             }
         }));
-        must_not.push(json!({
+        filters.push(json!({
             "range": {
                 "VirusDetection": {
-                    "gt": 0.6
+                    "lt": 0.6
                 }
             }
         }));
     }
 
     if !query.show_dead_torrents {
-        must.push(json!({ "range": { "Seeders": { "gt": 0 } } }));
-        must.push(json!({
+        filters.push(json!({ "range": { "Seeders": { "gt": 0 } } }));
+        filters.push(json!({
             "bool": {
                 "should": [
                     { "range": { "LiveSeeders": { "gt": 0 } } },
@@ -301,7 +307,7 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
     }
 
     if let Some(seconds_since_last_seen) = query.seconds_since_last_seen {
-        must.push(json!({
+        filters.push(json!({
             "bool": {
                 "should": [
                     {
@@ -318,7 +324,8 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
                             }
                         }
                     }
-                ]
+                ],
+                "minimum_should_match": 1
             }
         }));
     }
@@ -332,6 +339,9 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
     }
     if !must_not.is_empty() {
         es_query["query"]["bool"]["must_not"] = Value::Array(must_not);
+    }
+    if !filters.is_empty() {
+        es_query["query"]["bool"]["filter"] = Value::Array(filters);
     }
 
     // Create an Elasticsearch client
