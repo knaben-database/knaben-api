@@ -25,7 +25,7 @@ pub async fn search(req: HttpRequest, query: web::Query<SearchQuery>, cache: web
         log::debug!("CACHE HIT: {ip_str} {user_agent}");
         return Ok(HttpResponse::Ok()
             .insert_header(("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=60"))
-            .insert_header(("X-Cache", "HIT"))
+            .insert_header(("X-Origin-Cache", "HIT"))
             .json(cached_result));
 
     }
@@ -207,7 +207,7 @@ pub async fn search(req: HttpRequest, query: web::Query<SearchQuery>, cache: web
 
     Ok(HttpResponse::Ok()
         .insert_header(("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=60"))
-        .insert_header(("X-Cache", "MISS"))
+        .insert_header(("X-Origin-Cache", "MISS"))
         .json(obscured))
 }
 
@@ -225,7 +225,7 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
         log::debug!("CACHE HIT: {ip_str} {user_agent}");
         return Ok(HttpResponse::Ok()
             .insert_header(("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=60"))
-            .insert_header(("X-Cache", "HIT"))
+            .insert_header(("X-Origin-Cache", "HIT"))
             .json(cached_result));
 
     }
@@ -368,6 +368,6 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
 
     Ok(HttpResponse::Ok()
         .insert_header(("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=60"))
-        .insert_header(("X-Cache", "MISS"))
+        .insert_header(("X-Origin-Cache", "MISS"))
         .json(obscured))
 }
