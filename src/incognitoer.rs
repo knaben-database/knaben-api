@@ -45,6 +45,7 @@ lazy_static! {
         let mut required_fields: HashSet<&str> = HashSet::new();
 
         required_fields.insert("title");
+        required_fields.insert("description");
         required_fields.insert("hash");
         required_fields.insert("cachedOrigin");
         required_fields.insert("tracker");
@@ -53,6 +54,8 @@ lazy_static! {
         required_fields.insert("grabs");
         required_fields.insert("seeders");
         required_fields.insert("peers");
+        required_fields.insert("liveSeeders");
+        required_fields.insert("livePeers");
         required_fields.insert("categoryId");
         required_fields.insert("category");
         required_fields.insert("details");
@@ -70,6 +73,7 @@ lazy_static! {
         let mut sort_map: HashMap<&str, &str> = HashMap::new();
 
         sort_map.insert("title", "Title.fullword");
+        sort_map.insert("description", "Description.fullword");
         sort_map.insert("hash", "InfoHash.keyword");
         sort_map.insert("cachedOrigin", "CachedOrigin.keyword");
         sort_map.insert("tracker", "Tracker.keyword");
@@ -78,6 +82,8 @@ lazy_static! {
         sort_map.insert("grabs", "LiveGrabs");
         sort_map.insert("seeders", "Seeders");
         sort_map.insert("peers", "Peers");
+        sort_map.insert("liveSeeders", "LiveSeeders");
+        sort_map.insert("livePeers", "LivePeers");
         sort_map.insert("categoryId", "Category");
         sort_map.insert("category", "CategoryDesc.keyword");
         sort_map.insert("details", "Details.keyword");
@@ -90,7 +96,7 @@ lazy_static! {
     };
 }
 
-pub fn format_sort(sort: String) -> Result<String, Box<dyn Error>> {
+pub fn format_sort(sort: &String) -> Result<String, Box<dyn Error>> {
     let sort = SORTER
         .get(sort.deref())
         .ok_or(format!("Unable to sort by {} because it doesn't exist in the mapping", sort))?;
@@ -102,6 +108,7 @@ lazy_static! {
         let mut replace_map: HashMap<&str, &str> = HashMap::new();
 
         replace_map.insert("Title", "title");
+        replace_map.insert("Description", "description");
         replace_map.insert("InfoHash", "hash");
         replace_map.insert("CachedOrigin", "cachedOrigin");
         replace_map.insert("Tracker", "tracker");
@@ -110,6 +117,8 @@ lazy_static! {
         replace_map.insert("LiveGrabs", "grabs");
         replace_map.insert("Seeders", "seeders");
         replace_map.insert("Peers", "peers");
+        replace_map.insert("LiveSeeders", "liveSeeders");
+        replace_map.insert("LivePeers", "livePeers");
         replace_map.insert("Category", "categoryId");
         replace_map.insert("CategoryDesc", "category");
         replace_map.insert("Details", "details");
@@ -132,6 +141,7 @@ lazy_static! {
         let mut replace_r_map: HashMap<&str, &str> = HashMap::new();
 
         replace_r_map.insert("title", "Title");
+        replace_r_map.insert("description", "Description");
         replace_r_map.insert("hash", "InfoHash");
         replace_r_map.insert("cachedOrigin", "CachedOrigin");
         replace_r_map.insert("tracker", "Tracker");
@@ -140,6 +150,8 @@ lazy_static! {
         replace_r_map.insert("grabs", "LiveGrabs");
         replace_r_map.insert("seeders", "Seeders");
         replace_r_map.insert("peers", "Peers");
+        replace_r_map.insert("liveSeeders", "LiveSeeders");
+        replace_r_map.insert("livePeers", "LivePeers");
         replace_r_map.insert("categoryId", "Category");
         replace_r_map.insert("category", "CategoryDesc");
         replace_r_map.insert("details", "Details");

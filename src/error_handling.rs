@@ -1,8 +1,9 @@
 use std::fmt;
 use actix_web::{error, HttpRequest, HttpResponse, ResponseError};
+use actix_web::error::QueryPayloadError;
 use actix_web::http::StatusCode;
 use serde::Serialize;
-use serde_json::{to_string_pretty};
+use serde_json::{to_string_pretty, Value};
 
 #[derive(Debug, Serialize)]
 pub struct Error {
@@ -54,16 +55,77 @@ impl ResponseError for Error {
     }
 }
 
+pub fn query_error_handler(err: QueryPayloadError, _req: &HttpRequest) -> actix_web::Error {
+    let resp = Error::new(
+        400,
+        "Invalid query parameters",
+        "invalid_query",
+        Some(&err.to_string()),
+    );
+    error::InternalError::from_response(err, resp.error_response()).into()
+}
+
 pub fn json_error_handler(err: error::JsonPayloadError, _req: &HttpRequest) -> error::Error {
     use actix_web::error::JsonPayloadError;
 
-    let detail = err.to_string();
-    let resp = match &err {
-        JsonPayloadError::ContentType => HttpResponse::UnsupportedMediaType().body(detail),
-        JsonPayloadError::Deserialize(json_err) if json_err.is_data() => {
-            HttpResponse::UnprocessableEntity().body(detail)
-        }
-        _ => HttpResponse::BadRequest().body(detail),
+    let (status, error_type) = match &err {
+        JsonPayloadError::ContentType        => (415, "unsupported_media_type"),
+        JsonPayloadError::Deserialize(e) if e.is_data() => (422, "invalid_json_body"),
+        JsonPayloadError::Deserialize(_)      => (400, "invalid_json_body"),
+        JsonPayloadError::Overflow{ limit: _ }=> (413, "payload_too_large"),
+        JsonPayloadError::Payload(_)          => (400, "invalid_payload"),
+        _                                     => (400, "invalid_json"),
     };
-    error::InternalError::from_response(err, resp).into()
+
+    let resp = Error::new(
+        status,
+        "Invalid JSON body",
+        error_type,
+        Some(&err.to_string()),
+    );
+
+    error::InternalError::from_response(err, resp.error_response()).into()
+}
+
+pub async fn format_es_response(r: Result<elasticsearch::http::response::Response, elasticsearch::Error>) -> Result<Value, Error> {
+    let r = r.map_err(|e| Error::new(500, "Failed to execute search", "query_failed", Some(&e.to_string())))?;
+    let status_code = r.status_code();
+    let value = r
+        .json::<Value>()
+        .await
+        .map_err(|e| Error::new(500, "Failed to parse response body", "parse_failed", Some(&e.to_string())))?;
+
+    if !status_code.is_success() {
+        if let Some(error) = value.get("error") {
+            let error_type = error.get("type").and_then(Value::as_str).unwrap_or("Unknown error type");
+            let reason = error.get("reason").and_then(Value::as_str);
+            let detailed_reason = error
+                .get("root_cause")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.get(0))
+                .and_then(|cause| cause.get("reason"))
+                .and_then(Value::as_str);
+            let detaileder_reason = error
+                .get("failed_shards")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.get(0))
+                .and_then(|cause| cause.get("reason"))
+                .and_then(|cause| cause.get("caused_by"))
+                .and_then(|cause| cause.get("reason"))
+                .and_then(Value::as_str);
+            let error_message = format!(
+                "Failed to execute search: {}",
+                detailed_reason.unwrap_or(reason.unwrap_or("Unknown reason"))
+            );
+            return Err(Error::new(
+                500,
+                &error_message,
+                error_type,
+                detaileder_reason.or(detailed_reason).or(Some("Unknown reason")),
+            ));
+        }
+        return Err(Error::new(500, "Failed to execute search", "query_failed", Some("Unknown error")));
+    }
+
+    Ok(value)
 }
