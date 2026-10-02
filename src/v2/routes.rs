@@ -331,7 +331,7 @@ pub async fn browse(req: HttpRequest, query: web::Query<BrowseQuery>, cache: web
     }
 
     // Join the must and must_not together
-    if must.is_empty() && must_not.is_empty() {
+    if must.is_empty() && must_not.is_empty() && filters.is_empty() {
         es_query["query"]["match_all"] = json!({});
     }
     if !must.is_empty() {
