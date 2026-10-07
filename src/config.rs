@@ -100,11 +100,11 @@ impl Config {
         dotenv::dotenv().ok();
 
         let addr = env::var("ADDR")
-            .map(|s| s.parse().expect("Failed to parse ADDR environment variable into an IPv4 Address"))
+            .map(|s| s.parse().expect(&format!("Failed to parse ADDR environment variable into an IPv4 Address ({})", s)))
             .unwrap_or(Self::default().addr);
 
         let port = env::var("PORT")
-            .map(|s| s.parse().expect("Failed to parse PORT environment variable into an unsigned 16 integer"))
+            .map(|s| s.parse().expect(&format!("Failed to parse PORT environment variable into an unsigned 16 integer ({})", s)))
             .unwrap_or(Self::default().port);
 
         let index = env::var("INDEX").unwrap_or(Self::default().index);
@@ -116,11 +116,11 @@ impl Config {
         let elasticsearch_host = env::var("ELASTICSEARCH_HOST").unwrap_or(Self::default().elasticsearch_host);
 
         let elasticsearch_port = env::var("ELASTICSEARCH_PORT")
-            .map(|s| s.parse().expect("Failed to parse ELASTICSEARCH_PORT environment variable into an unsigned 16 integer"))
+            .map(|s| s.parse().expect(&format!("Failed to parse ELASTICSEARCH_PORT environment variable into an unsigned 16 integer ({})", s)))
             .unwrap_or(Self::default().elasticsearch_port);
 
         let redis_port = env::var("REDIS_PORT")
-            .map(|s| s.parse().expect("Failed to parse REDIS_PORT environment variable into an unsigned 16 integer"))
+            .map(|s| s.parse().expect(&format!("Failed to parse REDIS_PORT environment variable into an unsigned 16 integer ({})", s)))
             .unwrap_or(Self::default().redis_port);
 
         let redis_host = env::var("REDIS_HOST").unwrap_or(Self::default().redis_host);
